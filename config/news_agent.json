@@ -1,0 +1,69 @@
+{
+    "enabled": true,
+    "fetch_interval_seconds": 300,
+    "market_hours_only": true,
+    "min_impact_level": "high",
+    "alert_valid_hours": 2,
+    "max_news_age_hours": 24,
+    "analyze_all_news": false,
+    
+    "rss": {
+        "timeout_seconds": 30,
+        "max_concurrent_feeds": 5,
+        "user_agent": "AlphaStocks NewsAgent/1.0",
+        "feeds": {
+            "top_stories": "https://www.business-standard.com/rss/home_page_top_stories.rss",
+            "latest_news": "https://www.business-standard.com/rss/latest.rss",
+            "todays_paper": "https://www.business-standard.com/rss/todays-paper.rss",
+            "market_news": "https://www.business-standard.com/rss/markets-106.rss",
+            "most_popular": "https://www.business-standard.com/rss/most-viewed.rss",
+            "editors_pick": "https://www.business-standard.com/rss/bsrss.xml",
+            "industry": "https://www.business-standard.com/rss/industry-217.rss",
+            "auto": "https://www.business-standard.com/rss/industry/auto-21701.rss",
+            "sme": "https://www.business-standard.com/rss/industry/sme-21702.rss",
+            "banking": "https://www.business-standard.com/rss/industry/banking-21703.rss",
+            "agriculture": "https://www.business-standard.com/rss/industry/agriculture-21704.rss",
+            "industry_news": "https://www.business-standard.com/rss/industry/news-21705.rss",
+            "aviation": "https://www.business-standard.com/rss/industry/aviation-21706.rss"
+        }
+    },
+    
+    "llama": {
+        "base_url": "http://localhost:11434",
+        "model_name": "gemma3:1b",
+        "timeout_seconds": 60,
+        "max_concurrent_analyses": 3,
+        "temperature": 0.3,
+        "api_type": "ollama"
+    },
+    
+    "price_validation": {
+        "min_move_for_impact": 0.5,
+        "volume_spike_ratio": 2.0,
+        "lookback_periods": 20,
+        "max_news_age_hours": 4,
+        "min_remaining_move_pct": 0.5,
+        "sl_pct_of_expected": 0.5,
+        "target_pct_of_expected": 0.8,
+        "max_sl_pct": 1.5
+    },
+    
+    "alerting": {
+        "log_alerts": true,
+        "publish_events": true,
+        "store_in_database": true
+    },
+    
+    "telegram": {
+        "enabled": false,
+        "bot_token": "7600176927:AAHpD9du3OfbyH9ACJtApHRhX8ZUjs7eiiA",
+        "chat_id": "7766121440",
+        "parse_mode": "HTML",
+        "timeout_seconds": 30
+    },
+    
+    "logging": {
+        "level": "INFO",
+        "log_file": "logs/news_agent.log"
+    }
+}

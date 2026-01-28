@@ -1,0 +1,629 @@
+# AlphaStock Trading System - Production Architecture Design
+
+## Overview
+AlphaStock is a production-ready algorithmic trading system designed to run multiple strategies simultaneously on different stocks while automatically managing options trading based on underlying stock signals.
+
+## Core Architecture Principles
+1. **Separation of Concerns**: Each component has a single, well-defined responsibility
+2. **Scalability**: System can handle multiple strategies and stocks simultaneously
+3. **Real-time Processing**: High-frequency data collection and processing
+4. **Risk Management**: Built-in safeguards and position management
+5. **Modularity**: Easy to add new strategies, data sources, and features
+
+## System Components
+
+### 1. STRATEGIES COMPONENT
+**Purpose**: Core trading logic implementation and signal generation
+
+#### 1.1 Base Strategy Interface
+```python
+class BaseStrategy:
+    def __init__(self, config, symbol):
+        self.config = config
+        self.symbol = symbol
+        self.parameters = config.get('parameters', {})
+        self.signal_manager = None
+        
+    def analyze(self, market_data, options_data=None):
+        """Main analysis method - must be implemented by each strategy"""
+        raise NotImplementedError
+        
+    def get_signal_strength(self, signal_data):
+        """Return signal strength/confidence (0-100)"""
+        raise NotImplementedError
+        
+    def calculate_risk_reward(self, entry_price, market_data):
+        """Calculate stop loss and target prices"""
+        raise NotImplementedError
+```
+
+#### 1.2 Strategy Types
+- **Trend Following Strategies**: EMA Crossover, Moving Average strategies
+- **Mean Reversion Strategies**: RSI Divergence, Bollinger Band strategies  
+- **Momentum Strategies**: Price breakout, Volume-based strategies
+- **Volatility Strategies**: Options volatility-based strategies
+- **Machine Learning Strategies**: AI/ML-based prediction strategies
+
+#### 1.3 Strategy Manager
+```python
+class StrategyManager:
+    def __init__(self, config):
+        self.strategies = {}  # symbol -> [strategies]
+        self.config = config
+        
+    def register_strategy(self, symbol, strategy_instance):
+        """Register a strategy for a specific symbol"""
+        
+    def run_analysis(self, symbol, market_data, options_data):
+        """Run all strategies for a symbol and collect signals"""
+        
+    def aggregate_signals(self, signals):
+        """Aggregate multiple signals from different strategies"""
+```
+
+### 2. RUNNER COMPONENT (Market Data Runner)
+**Purpose**: Continuously pull market data for all configured stocks
+
+#### 2.1 Data Collection Specification
+- **Frequency**: Configurable (default: every 5 seconds during market hours)
+- **Data Points**: OHLC, Volume, LTP, Bid/Ask prices
+- **Symbols**: All configured stocks from config
+- **Storage**: Real-time cache + persistent storage for history
+
+#### 2.2 Runner Implementation
+```python
+class MarketDataRunner:
+    def __init__(self, api_client, config, data_manager):
+        self.api_client = api_client
+        self.symbols = [stock['symbol'] for stock in config['stocks']]
+        self.frequency = config['data_collection']['realtime']['interval_seconds']
+        self.data_manager = data_manager
+        self.is_running = False
+        
+    def start_collection(self):
+        """Start continuous data collection"""
+        
+    def collect_market_data(self):
+        """Collect data for all symbols in one API call"""
+        
+    def process_and_store(self, raw_data):
+        """Process and store collected data"""
+        
+    def notify_strategies(self, symbol, market_data):
+        """Notify relevant strategies about new data"""
+```
+
+#### 2.3 Data Flow
+```
+API → Market Data Runner → Data Processing → Cache/Storage → Strategy Notification
+```
+
+### 3. RUNNEROPTIONS COMPONENT (Options Data Runner)  
+**Purpose**: High-frequency options data collection with intelligent strike selection
+
+#### 3.1 Options Data Specification
+- **Frequency**: Higher than market data (default: every 2-3 seconds)
+- **Strike Selection**: Dynamically select nearest 3 strikes based on underlying price
+- **Data Points**: Premium, IV, Greeks, OI, Volume, Bid/Ask
+- **Smart Filtering**: Only collect liquid options (min OI/volume thresholds)
+
+#### 3.2 Strike Selection Logic
+```python
+class OptionsStrikeSelector:
+    def get_relevant_strikes(self, underlying_price, option_chain):
+        """
+        Select 3 most relevant strikes for each option type (CE/PE)
+        Logic:
+        - Find ATM strike closest to underlying price
+        - Select 1 ITM, 1 ATM, 1 OTM for both CE and PE
+        - Filter by liquidity (min OI: 100, min volume: 50)
+        """
+        
+    def calculate_moneyness(self, strike_price, underlying_price):
+        """Calculate how ITM/OTM an option is"""
+        return (strike_price / underlying_price) * 100
+```
+
+#### 3.3 Options Runner Implementation
+```python
+class OptionsDataRunner:
+    def __init__(self, api_client, config, options_manager):
+        self.api_client = api_client
+        self.symbols = self._get_options_symbols()
+        self.frequency = config['options_data']['collection_frequency']  # 2-3 seconds
+        self.strike_selector = OptionsStrikeSelector()
+        
+    def collect_options_data(self):
+        """Collect options data for dynamically selected strikes"""
+        for symbol in self.symbols:
+            underlying_price = self.get_underlying_price(symbol)
+            strikes = self.strike_selector.get_relevant_strikes(underlying_price, symbol)
+            options_data = self.api_client.get_options_quotes(strikes)
+            self.process_options_data(symbol, options_data)
+```
+
+### 4. API COMPONENT
+**Purpose**: Unified interface for all external API communications
+
+#### 4.1 API Abstraction Layer
+```python
+class TradingAPIClient:
+    def __init__(self, config):
+        self.mstock_client = MStockAPI(config)
+        self.rate_limiter = RateLimiter(config['api']['rate_limits'])
+        
+    def get_market_data(self, symbols):
+        """Get real-time market data for multiple symbols"""
+        
+    def get_options_chain(self, symbol, strikes=None):
+        """Get options chain data"""
+        
+    def get_options_quotes(self, option_symbols):
+        """Get real-time options quotes"""
+        
+    def place_order(self, order_params):
+        """Place trading order"""
+        
+    def get_positions(self):
+        """Get current positions"""
+```
+
+#### 4.2 Rate Limiting & Error Handling
+- **Rate Limiting**: Respect broker API limits
+- **Retry Logic**: Exponential backoff for failed requests
+- **Circuit Breaker**: Stop requests if API is down
+- **Caching**: Cache static data (option chains, instrument lists)
+
+### 5. OPTIONS PRICING & TARGET CALCULATION
+**Purpose**: Calculate option targets and stop losses based on underlying movement predictions
+
+#### 5.1 Options Pricing Model
+```python
+class OptionsPricingEngine:
+    def __init__(self):
+        self.historical_correlations = {}  # underlying_move -> option_price_move
+        
+    def calculate_option_target(self, underlying_signal, option_data):
+        """
+        Calculate option target price based on underlying target
+        
+        DETAILED EXAMPLE (Your BankNifty Case):
+        ===========================================
+        Current Situation:
+        - BANKNIFTY at 50,000 (current price)
+        - Strategy signal: BUY, target 55,000 (10% move)
+        - Available: 50,000 CE currently trading at 350
+        
+        Historical Correlation Data:
+        - When BANKNIFTY moved from 48,000 → 50,000 (+4.17%)
+        - 50,000 CE moved from 300 → 350 (+16.67%)
+        - Correlation ratio: 16.67% / 4.17% = 4x multiplier
+        
+        Target Calculation:
+        - Expected BANKNIFTY move: 50,000 → 55,000 (+10%)
+        - Expected CE premium move: 10% * 4x = +40%
+        - Target CE premium: 350 * 1.40 = 490
+        
+        Risk Management:
+        - Stop Loss: If BANKNIFTY drops to 49,000 (-2%)
+        - Expected CE premium drop: 2% * 4x = -8%
+        - Stop Loss premium: 350 * 0.92 = 322
+        """
+        
+        underlying_move_pct = self.calculate_move_percentage(
+            underlying_signal['current_price'], 
+            underlying_signal['target_price']
+        )
+        
+        option_multiplier = self.get_option_multiplier(
+            option_data['strike'],
+            option_data['option_type'], 
+            underlying_move_pct,
+            option_data['days_to_expiry']
+        )
+        
+        target_premium = option_data['current_premium'] * (1 + (underlying_move_pct * option_multiplier))
+        return target_premium
+        
+    def get_option_multiplier(self, strike, option_type, underlying_move_pct, dte):
+        """
+        Get historical multiplier for option price movement
+        
+        Factors affecting multiplier:
+        1. Moneyness: ATM options have highest delta (~0.5)
+        2. Time to Expiry: More time = higher multiplier
+        3. Volatility: Higher volatility = higher multiplier
+        4. Historical correlation from our database
+        
+        Example Multipliers:
+        - ATM CE with 7 days to expiry: 3-4x
+        - OTM CE with 7 days to expiry: 5-8x (higher risk/reward)
+        - ITM CE with 7 days to expiry: 2-3x (lower risk/reward)
+        """
+        
+        # Base multiplier from historical data
+        base_multiplier = self.historical_correlations.get(
+            f"{strike}_{option_type}_{dte}", 4.0  # Default 4x
+        )
+        
+        # Adjust for market conditions
+        volatility_adjustment = self.get_volatility_adjustment()
+        time_decay_adjustment = self.get_time_decay_adjustment(dte)
+        
+        final_multiplier = base_multiplier * volatility_adjustment * time_decay_adjustment
+        return final_multiplier
+```
+
+#### 5.2 Delta-Based Calculation
+```python
+def calculate_delta_based_target(self, option_data, underlying_move):
+    """
+    Use option delta for more accurate pricing
+    
+    Formula:
+    Expected Option Price Change = Delta * Underlying Price Change
+    
+    Example:
+    - Delta: 0.65, Underlying move: +500 points
+    - Expected option price increase: 0.65 * 500 = 325 points
+    """
+    delta = option_data.get('delta', 0.5)  # Default delta if not available
+    expected_change = delta * underlying_move
+    return option_data['current_premium'] + expected_change
+```
+
+### 6. SIGNAL PROCESSING & EXECUTION FLOW
+
+#### 6.1 Complete Flow Diagram
+```
+Market Data Runner (5s) → Market Data Cache
+                       ↓
+Options Data Runner (2s) → Options Data Cache  
+                       ↓
+Strategy Analysis → Signal Generation → Signal Validation
+                       ↓
+Options Selection → Target/SL Calculation → Risk Validation
+                       ↓
+Order Execution → Position Monitoring → Exit Management
+```
+
+#### 6.2 Signal Processing Pipeline
+```python
+class SignalProcessor:
+    def process_signal(self, underlying_signal):
+        """
+        Complete signal processing pipeline
+        """
+        # Step 1: Validate signal
+        if not self.validate_signal(underlying_signal):
+            return None
+            
+        # Step 2: Find optimal option
+        option_candidate = self.find_optimal_option(underlying_signal)
+        if not option_candidate:
+            return None
+            
+        # Step 3: Calculate targets and stop loss
+        targets = self.calculate_targets(underlying_signal, option_candidate)
+        
+        # Step 4: Risk assessment
+        if not self.assess_risk(targets):
+            return None
+            
+        # Step 5: Create execution order
+        return self.create_order(option_candidate, targets)
+```
+
+### 7. CONFIGURATION MANAGEMENT
+
+#### 7.1 Enhanced Configuration Structure
+```yaml
+# config/production.yaml
+system:
+  environment: "production"
+  log_level: "INFO"
+  
+market_data_runner:
+  frequency_seconds: 5
+  retry_attempts: 3
+  batch_size: 50
+  
+options_data_runner:
+  frequency_seconds: 2
+  strike_selection:
+    strikes_per_side: 3  # 3 CE + 3 PE
+    liquidity_filters:
+      min_oi: 100
+      min_volume: 50
+      max_spread_pct: 5
+  
+strategies:
+  ema_crossover:
+    enabled: true
+    symbols: ["BANKNIFTY", "NIFTY", "FINNIFTY"]
+    parameters:
+      fast_ema: 5
+      slow_ema: 20
+      min_confidence: 70
+      
+  rsi_divergence:
+    enabled: true  
+    symbols: ["NSE:SBIN", "NSE:RELIANCE"]
+    parameters:
+      rsi_period: 14
+      divergence_periods: 5
+      
+options_trading:
+  enabled: true
+  target_calculation_method: "delta_based"  # delta_based, historical_correlation
+  risk_management:
+    max_premium_per_trade: 10000
+    max_positions: 5
+    profit_target_pct: 30
+    stop_loss_pct: 20
+```
+
+### 8. ADDITIONAL COMPONENTS (Future Extensions)
+
+#### 8.1 AI/ML Decision Layer
+```python
+class AIDecisionEngine:
+    def enhance_signal(self, raw_signal, market_context):
+        """Use ML models to enhance signal strength and targets"""
+        
+    def predict_option_movement(self, underlying_prediction, option_data):
+        """ML-based option price prediction"""
+```
+
+#### 8.2 Historical Data Manager
+```python
+class HistoricalDataManager:
+    def collect_historical_correlations(self):
+        """Build correlation database for option pricing"""
+        
+    def backtest_strategy(self, strategy, date_range):
+        """Comprehensive backtesting with options data"""
+```
+
+#### 8.3 Risk Management Layer
+```python
+class RiskManager:
+    def validate_position_size(self, signal, account_balance):
+        """Ensure position size is within risk limits"""
+        
+    def check_correlation_risk(self, new_signal, existing_positions):
+        """Avoid over-concentration in similar positions"""
+```
+
+## Implementation Timeline
+
+### Phase 1: Core Infrastructure (2-3 weeks)
+1. Implement base strategy interface
+2. Create market data runner
+3. Build options data runner with strike selection
+4. Enhance API abstraction layer
+
+### Phase 2: Signal Processing (2-3 weeks)  
+1. Implement options pricing engine
+2. Build signal processing pipeline
+3. Create position management system
+4. Add comprehensive testing
+
+### Phase 3: Production Features (3-4 weeks)
+1. Add monitoring and alerting
+2. Implement risk management layer
+3. Create web dashboard
+4. Add performance analytics
+
+### Phase 4: Advanced Features (4-6 weeks)
+1. ML decision engine
+2. Advanced backtesting
+3. Multi-broker support
+4. Mobile notifications
+
+## Risk Considerations
+1. **Market Risk**: Position sizing and diversification
+2. **Technical Risk**: System failures, API outages  
+3. **Liquidity Risk**: Options liquidity monitoring
+4. **Model Risk**: Strategy performance degradation
+5. **Operational Risk**: Human errors, configuration issues
+
+## PRACTICAL IMPLEMENTATION EXAMPLE
+
+### Real-World Scenario Walkthrough
+
+Let's trace through a complete example from data collection to order execution:
+
+#### Scenario: BANKNIFTY EMA Crossover Signal
+
+**Step 1: Market Data Collection (MarketDataRunner - every 5s)**
+```
+Time: 10:15:30 AM
+BANKNIFTY: 51,245 (LTP), Volume: 1,25,000
+EMA5: 51,180, EMA20: 51,100
+```
+
+**Step 2: Options Data Collection (OptionsDataRunner - every 2s)**  
+```
+Time: 10:15:32 AM
+Strike Selection for BANKNIFTY @ 51,245:
+- 51,000 CE: Premium 380, Delta 0.58, OI 5,200
+- 51,200 CE: Premium 280, Delta 0.52, OI 8,100 ← SELECTED (ATM)
+- 51,500 CE: Premium 180, Delta 0.35, OI 3,900
+
+Current 51,200 CE Data:
+- Premium: 280
+- Delta: 0.52
+- Gamma: 0.003
+- Theta: -2.1
+- IV: 18.5%
+```
+
+**Step 3: Strategy Analysis (EMAScalpingStrategy)**
+```python
+def analyze(self, market_data, options_data):
+    current_price = 51,245
+    ema5 = 51,180  
+    ema20 = 51,100
+    
+    # EMA Crossover Logic
+    if ema5 > ema20 and previous_ema5 <= previous_ema20:
+        # Bullish crossover detected
+        signal_strength = self.calculate_confidence(market_data)
+        # Confidence: 78% (above threshold of 70%)
+        
+        target_price = current_price + (current_price * 0.008)  # 0.8% target
+        target_price = 51,245 + 410 = 51,655
+        
+        return {
+            'signal_type': 'BUY',
+            'current_price': 51,245,
+            'target_price': 51,655,
+            'confidence': 78,
+            'expected_move_pct': 0.8
+        }
+```
+
+**Step 4: Options Selection & Pricing**
+```python
+def process_signal(self, underlying_signal):
+    # Select optimal option: 51,200 CE (closest to ATM)
+    option_data = {
+        'strike': 51200,
+        'option_type': 'CE',
+        'current_premium': 280,
+        'delta': 0.52,
+        'days_to_expiry': 3
+    }
+    
+    # Calculate target premium
+    expected_move = 51,655 - 51,245 = 410 points
+    delta_based_move = 0.52 * 410 = 213 points premium increase
+    target_premium = 280 + 213 = 493
+    
+    # Alternative: Historical correlation method
+    # BANKNIFTY move: +0.8% typically results in ATM CE move of +20-25%
+    # Target premium = 280 * 1.22 = 342
+    
+    # Use conservative estimate: 420 (average of both methods)
+    
+    return {
+        'option_symbol': 'BANKNIFTY24O2851200CE',
+        'entry_premium': 280,
+        'target_premium': 420,
+        'stop_loss_premium': 250,  # 10% stop loss
+        'quantity': 75  # 1 lot
+    }
+```
+
+**Step 5: Risk Validation**
+```python
+def validate_trade(self, trade_params):
+    max_loss = (280 - 250) * 75 = 2,250
+    available_capital = 50,000
+    risk_per_trade = 5%  # Max 2,500 per trade
+    
+    if max_loss <= 2,500:  # ✓ Risk acceptable
+        return True
+```
+
+**Step 6: Order Execution**
+```python
+order_params = {
+    'symbol': 'BANKNIFTY24O2851200CE',
+    'quantity': 75,
+    'transaction_type': 'BUY',
+    'order_type': 'MARKET',
+    'product': 'MIS'
+}
+# Order placed at 10:15:35 AM
+```
+
+**Step 7: Position Monitoring (Every 5s)**
+```
+Time: 10:16:40 AM (65 seconds later)
+BANKNIFTY: 51,420 (moved +175 points as expected)
+51,200 CE: 315 (moved +35 points, +12.5% gain)
+
+P&L: (315 - 280) * 75 = +2,625 (52% of target reached)
+Continue monitoring...
+
+Time: 10:18:15 AM  
+BANKNIFTY: 51,580 (moved +335 points) 
+51,200 CE: 395 (moved +115 points, +41% gain)
+
+P&L: (395 - 280) * 75 = +8,625 (94% of target reached)
+Consider partial exit or trail stop loss...
+```
+
+### Code Structure for Implementation
+
+#### File: `src/core/market_data_runner.py`
+```python
+class MarketDataRunner:
+    def __init__(self, api_client, config, strategy_manager):
+        self.api_client = api_client
+        self.symbols = self._load_symbols()
+        self.strategy_manager = strategy_manager
+        self.frequency = 5  # seconds
+        
+    async def run(self):
+        while self.is_running:
+            try:
+                # Collect data for all symbols
+                market_data = await self.api_client.get_batch_quotes(self.symbols)
+                
+                # Process each symbol
+                for symbol, data in market_data.items():
+                    # Store in cache
+                    await self.data_cache.set(f"market:{symbol}", data)
+                    
+                    # Notify strategies
+                    await self.strategy_manager.process_market_data(symbol, data)
+                    
+                await asyncio.sleep(self.frequency)
+                
+            except Exception as e:
+                logger.error(f"Market data collection error: {e}")
+                await asyncio.sleep(self.frequency)
+```
+
+#### File: `src/core/options_data_runner.py`  
+```python
+class OptionsDataRunner:
+    def __init__(self, api_client, config):
+        self.api_client = api_client
+        self.strike_selector = OptionsStrikeSelector()
+        self.frequency = 2  # seconds
+        
+    async def run(self):
+        while self.is_running:
+            try:
+                for symbol in self.options_symbols:
+                    # Get current underlying price
+                    underlying_price = await self.get_underlying_price(symbol)
+                    
+                    # Select relevant strikes
+                    strikes = await self.strike_selector.get_strikes(
+                        symbol, underlying_price
+                    )
+                    
+                    # Get options data
+                    options_data = await self.api_client.get_options_quotes(strikes)
+                    
+                    # Store in cache
+                    await self.data_cache.set(f"options:{symbol}", options_data)
+                    
+                await asyncio.sleep(self.frequency)
+                
+            except Exception as e:
+                logger.error(f"Options data collection error: {e}")
+```
+
+## Success Metrics
+1. **Performance**: Sharpe ratio, max drawdown, win rate
+2. **Reliability**: System uptime, error rates
+3. **Scalability**: Number of concurrent strategies/symbols
+4. **Risk Management**: Risk-adjusted returns, position limits adherence
+
+This design provides a robust, scalable foundation for a production trading system with clear separation of concerns and room for future enhancements.

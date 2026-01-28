@@ -1,0 +1,59 @@
+{
+    "default": "development",
+    "development": {
+        "type": "clickhouse",
+        "primary": "clickhouse",
+        "cache": "none",
+        "clickhouse": {
+            "host": "localhost",
+            "port": 8123,
+            "database": "alphastock",
+            "username": "default",
+            "password": "",
+            "settings": {
+                "use_numpy": true
+            }
+        },
+        "redis": {
+            "host": "localhost",
+            "port": 6379,
+            "db": 0,
+            "decode_responses": false
+        },
+        "postgresql": {
+            "host": "localhost",
+            "port": 5432,
+            "database": "alphastock_dev",
+            "username": "postgres",
+            "password": "postgres"
+        }
+    },
+    "production": {
+        "type": "hybrid",
+        "primary": "clickhouse",
+        "cache": "redis",
+        "clickhouse": {
+            "host": "localhost",
+            "port": 9000,
+            "database": "alphastock",
+            "username": "default",
+            "password": "",
+            "settings": {
+                "use_numpy": true
+            }
+        },
+        "redis": {
+            "host": "localhost",
+            "port": 6379,
+            "db": 0,
+            "decode_responses": false
+        },
+        "postgresql": {
+            "host": "localhost",
+            "port": 5432,
+            "database": "alphastock",
+            "username": "postgres",
+            "password": "postgres"
+        }
+    }
+}
