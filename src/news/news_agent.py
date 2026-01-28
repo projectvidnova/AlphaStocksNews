@@ -115,7 +115,8 @@ class NewsAgent:
             feeds=rss_feeds,
             timeout_seconds=rss_config.get("timeout_seconds", 30),
             max_concurrent=rss_config.get("max_concurrent_feeds", 5),
-            user_agent=rss_config.get("user_agent")
+            user_agent=rss_config.get("user_agent"),
+            scrape_full_articles=self.config.get("scrape_full_articles", False)
         )
         
         # Get Llama config
@@ -124,7 +125,11 @@ class NewsAgent:
             base_url=llama_config.get("base_url", "http://localhost:11434"),
             model_name=llama_config.get("model_name", "llama3.2:latest"),
             timeout_seconds=llama_config.get("timeout_seconds", 60),
-            max_concurrent=llama_config.get("max_concurrent_analyses", 3)
+            max_concurrent=llama_config.get("max_concurrent_analyses", 3),
+            temperature=llama_config.get("temperature", 0.3),
+            api_type=llama_config.get("api_type", "ollama"),
+            api_key=llama_config.get("api_key", None),
+            rate_limit_delay=llama_config.get("rate_limit_delay_seconds", 0.0)
         )
         
         self.price_validator = price_validator  # Initialized later with historical cache
@@ -240,7 +245,10 @@ class NewsAgent:
             try:
                 # Check market hours if configured
                 if self.config.get("market_hours_only", True) and not is_market_hours():
-                    logger.debug("Outside market hours, skipping news fetch")
+                    current_time = get_current_time()
+                    market_open = get_today_market_open()
+                    market_close = get_today_market_close()
+                    logger.info(f"Outside market hours (Current: {current_time.strftime('%H:%M')}, Market: {market_open.strftime('%H:%M')}-{market_close.strftime('%H:%M')}), checking again in 60s")
                     await asyncio.sleep(60)  # Check every minute
                     continue
                 
@@ -298,14 +306,37 @@ class NewsAgent:
             if not new_items:
                 return cycle_results
             
+            # Step 2.5: Scrape full articles for NEW news only (if enabled)
+            if self.config.get("scrape_full_articles", False):
+                logger.info(f"Scraping {len(new_items)} new articles...")
+                scrape_tasks = []
+                for item in new_items:
+                    if not item.raw_content:  # Only scrape if no content yet
+                        scrape_tasks.append(self._scrape_and_update(item))
+                
+                if scrape_tasks:
+                    await asyncio.gather(*scrape_tasks, return_exceptions=True)
+            
             # Step 3: Filter by age
             max_age_hours = self.config.get("max_news_age_hours", 24)
             cutoff_time = get_current_time() - timedelta(hours=max_age_hours)
+            
+            # Log date range before filtering
+            items_before_filter = len(new_items)
+            if new_items:
+                dates = [n.published_date for n in new_items]
+                oldest = min(dates)
+                newest = max(dates)
+                logger.info(f"News date range: {oldest.strftime('%Y-%m-%d %H:%M')} to {newest.strftime('%Y-%m-%d %H:%M')}")
+                logger.info(f"Cutoff time: {cutoff_time.strftime('%Y-%m-%d %H:%M')} (max age: {max_age_hours}h)")
+            
             new_items = [n for n in new_items if n.published_date >= cutoff_time]
             
             if not new_items:
-                logger.info("No recent news to analyze")
+                logger.info(f"No recent news to analyze (all {items_before_filter} items older than {max_age_hours}h)")
                 return cycle_results
+            
+            logger.info(f"Filtered to {len(new_items)} news items within {max_age_hours}h age limit")
             
             # Step 4: Process each news item immediately after analysis
             # This ensures real-time alerting without waiting for batch completion
@@ -456,6 +487,28 @@ class NewsAgent:
         except Exception as e:
             logger.warning(f"Error checking processed news, returning all: {e}")
             return news_items
+    
+    async def _scrape_and_update(self, news_item: NewsItem):
+        """Scrape article content and update the news item."""
+        try:
+            content = await self.rss_fetcher.scrape_article(news_item)
+            if content:
+                # Create new NewsItem with scraped content (NewsItem is immutable)
+                updated_item = NewsItem(
+                    news_id=news_item.news_id,
+                    title=news_item.title,
+                    description=news_item.description,
+                    link=news_item.link,
+                    published_date=news_item.published_date,
+                    source_feed=news_item.source_feed,
+                    raw_content=content,
+                    fetch_timestamp=news_item.fetch_timestamp
+                )
+                logger.info(f"Scraped article: {news_item.link[:60]}... ({len(content)} chars)")
+                return updated_item
+        except Exception as e:
+            logger.warning(f"Failed to scrape article {news_item.link[:60]}: {e}")
+        return news_item
     
     async def _mark_news_processed(self, news_items: List[NewsItem]):
         """Mark news items as processed using data helper."""

@@ -1,11 +1,12 @@
 {
     "enabled": true,
     "fetch_interval_seconds": 300,
-    "market_hours_only": true,
+    "market_hours_only": false,
     "min_impact_level": "high",
     "alert_valid_hours": 2,
     "max_news_age_hours": 24,
     "analyze_all_news": false,
+    "scrape_full_articles": true,
     
     "rss": {
         "timeout_seconds": 30,
@@ -29,12 +30,13 @@
     },
     
     "llama": {
-        "base_url": "http://localhost:11434",
-        "model_name": "gemma3:1b",
+        "base_url": "https://adithyasaisaladi-1060-resource.services.ai.azure.com",
+        "model_name": "DeepSeek-V3.2",
         "timeout_seconds": 60,
-        "max_concurrent_analyses": 3,
+        "max_concurrent_analyses": 1,
         "temperature": 0.3,
-        "api_type": "ollama"
+        "api_type": "openai",
+        "rate_limit_delay_seconds": 3
     },
     
     "price_validation": {
@@ -55,7 +57,7 @@
     },
     
     "telegram": {
-        "enabled": false,
+        "enabled": true,
         "bot_token": "7600176927:AAHpD9du3OfbyH9ACJtApHRhX8ZUjs7eiiA",
         "chat_id": "7766121440",
         "parse_mode": "HTML",

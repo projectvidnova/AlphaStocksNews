@@ -176,24 +176,24 @@ class TelegramNotifier:
         lines = []
         
         # Header with impact level
-        impact = impact_emoji.get(alert.impact_level.value, "⚪")
-        lines.append(f"<b>{impact} NEWS ALERT - {alert.impact_level.value.upper()}</b>")
+        impact = impact_emoji.get(analysis.impact_level.value, "⚪")
+        lines.append(f"<b>{impact} NEWS ALERT - {analysis.impact_level.value.upper()}</b>")
         lines.append("")
         
         # Title
-        lines.append(f"<b>📰 {self._escape_html(alert.title)}</b>")
+        lines.append(f"<b>📰 {self._escape_html(alert.news_title)}</b>")
         lines.append("")
         
         # Analysis
         lines.append("<b>🔍 Analysis:</b>")
-        lines.append(self._escape_html(analysis.summary))
+        lines.append(self._escape_html(analysis.analysis_summary))
         lines.append("")
         
         # Key insights
-        if analysis.key_insights:
-            lines.append("<b>💡 Key Insights:</b>")
-            for insight in analysis.key_insights:
-                lines.append(f"• {self._escape_html(insight)}")
+        if analysis.key_points:
+            lines.append("<b>💡 Key Points:</b>")
+            for point in analysis.key_points:
+                lines.append(f"• {self._escape_html(point)}")
             lines.append("")
         
         # Affected stocks/sectors
@@ -202,9 +202,9 @@ class TelegramNotifier:
             lines.append(", ".join(analysis.affected_stocks))
             lines.append("")
         
-        if analysis.affected_sectors:
-            lines.append("<b>🏭 Affected Sectors:</b>")
-            lines.append(", ".join(analysis.affected_sectors))
+        if analysis.affected_industries:
+            lines.append("<b>🏭 Affected Industries:</b>")
+            lines.append(", ".join(analysis.affected_industries))
             lines.append("")
         
         # Sentiment
@@ -212,33 +212,30 @@ class TelegramNotifier:
         lines.append(f"<b>Sentiment:</b> {sentiment} {analysis.sentiment.value.title()}")
         lines.append("")
         
-        # Signal strength
-        strength_bar = "█" * int(analysis.signal_strength * 10)
-        lines.append(f"<b>Signal Strength:</b> {strength_bar} {analysis.signal_strength:.1%}")
+        # Confidence score
+        strength_bar = "█" * int(analysis.confidence_score * 10)
+        lines.append(f"<b>Confidence:</b> {strength_bar} {analysis.confidence_score:.1%}")
         lines.append("")
         
         # Trading recommendation
-        if alert.trading_recommendation:
+        if alert.recommended_action:
             lines.append(f"<b>💼 Recommendation:</b>")
-            lines.append(self._escape_html(alert.trading_recommendation))
+            lines.append(self._escape_html(alert.recommended_action))
             lines.append("")
         
-        # Price validation (if available)
-        if alert.price_adjustment_status:
-            status_text = alert.price_adjustment_status.value.replace('_', ' ').title()
-            lines.append(f"<b>📊 Price Status:</b> {status_text}")
-            
-            if alert.expected_move_pct:
-                lines.append(f"<b>Expected Move:</b> {alert.expected_move_pct:+.2f}%")
-            
-            if alert.remaining_move_pct:
-                lines.append(f"<b>Remaining Potential:</b> {alert.remaining_move_pct:+.2f}%")
-            
-            lines.append("")
+        # Price levels
+        lines.append(f"<b>💰 Price Levels:</b>")
+        lines.append(f"Entry: ₹{alert.entry_price:.2f}")
+        lines.append(f"Stop Loss: ₹{alert.stop_loss:.2f}")
+        lines.append(f"Target: ₹{alert.target:.2f}")
         
-        # News source and link
-        lines.append(f"<b>📅 Published:</b> {analysis.analyzed_at.strftime('%Y-%m-%d %H:%M IST')}")
-        lines.append(f"<b>🔗 Source:</b> <a href='{alert.news_link}'>Read Full Article</a>")
+        if alert.expected_move_pct:
+            lines.append(f"<b>Expected Move:</b> {alert.expected_move_pct:+.2f}% {alert.expected_direction.upper()}")
+        
+        lines.append("")
+        
+        # Timing info
+        lines.append(f"<b>⏰ Valid Until:</b> {alert.valid_until.strftime('%H:%M IST')}")
         
         # Footer
         lines.append("")

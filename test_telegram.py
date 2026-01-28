@@ -54,7 +54,7 @@ async def test_telegram_notification():
             "Real estate sector to see increased demand"
         ],
         analyzed_at=get_current_time(),
-        analyzer_model="gemma3:1b",
+        analyzer_model="gemma3:4b",
         raw_analysis="Detailed LLM analysis output..."
     )
     

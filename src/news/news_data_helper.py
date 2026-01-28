@@ -2,12 +2,14 @@
 News Data Layer Helper
 
 Provides news-specific data operations that work with the existing data layer
-or fall back to in-memory storage when database support is not available.
+or fall back to file-based storage when database support is not available.
 """
 
 import hashlib
+import json
 from collections import Counter
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
 from src.utils.logger_setup import setup_logger
@@ -23,16 +25,19 @@ class NewsDataHelper:
     news-specific tables.
     """
     
-    def __init__(self, data_layer: Optional[Any] = None, max_memory_items: int = 10000):
+    def __init__(self, data_layer: Optional[Any] = None, max_memory_items: int = 10000,
+                 cache_file: str = "data/news_cache.json"):
         """
         Initialize the news data helper.
         
         Args:
             data_layer: Optional data layer instance
             max_memory_items: Maximum items to keep in memory cache
+            cache_file: Path to file for persisting processed news IDs
         """
         self.data_layer = data_layer
         self.max_memory_items = max_memory_items
+        self.cache_file = Path(cache_file)
         self.logger = setup_logger("NewsDataHelper", level="INFO")
         
         # In-memory fallback storage
@@ -41,16 +46,66 @@ class NewsDataHelper:
         self._analysis_cache: Dict[str, Dict[str, Any]] = {}
         self._alert_cache: Dict[str, Dict[str, Any]] = {}
         
-        # Statistics
+        # Statistics (must be before _load_cache_from_file)
         self.stats = Counter({
             "news_stored": 0,
             "news_retrieved": 0,
             "duplicates_prevented": 0,
             "database_operations": 0,
-            "memory_operations": 0
+            "memory_operations": 0,
+            "file_operations": 0
         })
         
-        self.logger.info("NewsDataHelper initialized")
+        # Load processed IDs from file if exists
+        self._load_cache_from_file()
+        
+        self.logger.info(f"NewsDataHelper initialized with {len(self._processed_news_ids)} cached news IDs")
+    
+    def _load_cache_from_file(self):
+        """Load processed news IDs from cache file."""
+        try:
+            if self.cache_file.exists():
+                with open(self.cache_file, 'r') as f:
+                    data = json.load(f)
+                    self._processed_news_ids = set(data.get('processed_news_ids', []))
+                    # Only keep recent IDs (last 7 days worth)
+                    max_age = datetime.now().timestamp() - (7 * 24 * 3600)
+                    if data.get('last_updated', 0) < max_age:
+                        self.logger.info("Cache file is old, starting fresh")
+                        self._processed_news_ids = set()
+                    else:
+                        self.logger.info(f"Loaded {len(self._processed_news_ids)} processed news IDs from cache")
+                self.stats["file_operations"] += 1
+            else:
+                self.logger.info(f"No cache file found at {self.cache_file}, starting fresh")
+        except Exception as e:
+            self.logger.warning(f"Could not load cache file: {e}")
+            self._processed_news_ids = set()
+    
+    def _save_cache_to_file(self):
+        """Save processed news IDs to cache file."""
+        try:
+            # Create directory if it doesn't exist
+            self.cache_file.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Keep only the most recent IDs (limit to max_memory_items)
+            ids_to_save = list(self._processed_news_ids)
+            if len(ids_to_save) > self.max_memory_items:
+                ids_to_save = ids_to_save[-self.max_memory_items:]
+            
+            data = {
+                'processed_news_ids': ids_to_save,
+                'last_updated': datetime.now().timestamp(),
+                'count': len(ids_to_save)
+            }
+            
+            with open(self.cache_file, 'w') as f:
+                json.dump(data, f, indent=2)
+            
+            self.logger.debug(f"Saved {len(ids_to_save)} news IDs to cache file")
+            self.stats["file_operations"] += 1
+        except Exception as e:
+            self.logger.warning(f"Could not save cache file: {e}")
     
     async def initialize(self) -> bool:
         """
@@ -171,6 +226,10 @@ class NewsDataHelper:
             self._processed_news_ids.add(news_id)
             if news_data:
                 self._news_cache[news_id] = news_data
+            
+            # Save to file for persistence
+            self._save_cache_to_file()
+            self.logger.debug(f"Marked news {news_id[:30]}... as processed")
             
             # Cleanup if cache is too large
             await self._cleanup_memory_cache()

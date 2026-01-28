@@ -1,10 +1,11 @@
 """
 Run News Agent - One-time execution script
-Fetches news, analyzes with Llama, and generates alerts.
+Fetches news, analyzes with Azure AI Foundry, and generates alerts.
 """
 
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -35,11 +36,30 @@ async def main():
     config["validate_price_impact"] = False  # Skip price validation
     config["min_impact_level"] = "medium"  # Include medium impact news
     config["max_news_age_hours"] = 12  # Recent news only
+    config["scrape_full_articles"] = True  # Enable article scraping for testing
     
-    # Update llama config to use available model
+    print("\n🔍 Article scraping ENABLED for this test run")
+    
+    # Update llama config to use Azure AI Foundry
     if "llama" not in config:
         config["llama"] = {}
-    config["llama"]["model_name"] = "gemma3:1b"
+    
+    # Configure Azure AI Foundry settings (override for this run)
+    # Base URL without /models/chat/completions - that's added by the API handler
+    config["llama"]["base_url"] = "https://adithyasaisaladi-1060-resource.services.ai.azure.com"
+    config["llama"]["model_name"] = "DeepSeek-V3.2"
+    config["llama"]["api_type"] = "openai"
+    
+    # Use API key from config file if present, otherwise check environment
+    if not config["llama"].get("api_key"):
+        azure_api_key = os.getenv("AZURE_API_KEY")
+        if not azure_api_key:
+            print("\n⚠️  WARNING: AZURE_API_KEY not found in config or environment!")
+            print("   Set it with: export AZURE_API_KEY='your-api-key-here'")
+            print("   Or add it to config/news_agent.json")
+        config["llama"]["api_key"] = azure_api_key
+    else:
+        print(f"\n✓ Using API key from config (length: {len(config['llama']['api_key'])} chars)")
     
     # Create agent
     agent = NewsAgent(config=config)

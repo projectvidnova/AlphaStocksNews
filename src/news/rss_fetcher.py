@@ -14,6 +14,12 @@ from datetime import datetime
 from typing import Dict, List, Optional
 from email.utils import parsedate_to_datetime
 
+try:
+    from bs4 import BeautifulSoup
+    BS4_AVAILABLE = True
+except ImportError:
+    BS4_AVAILABLE = False
+
 from ..utils.logger_setup import setup_logger
 from ..utils.timezone_utils import get_current_time, to_ist
 from .models import NewsItem
@@ -39,7 +45,8 @@ class RSSFetcher:
                  feeds: Optional[Dict[str, str]] = None,
                  timeout_seconds: int = 30,
                  max_concurrent: int = 5,
-                 user_agent: str = None):
+                 user_agent: str = None,
+                 scrape_full_articles: bool = False):
         """
         Initialize RSS fetcher.
         
@@ -48,12 +55,18 @@ class RSSFetcher:
             timeout_seconds: Request timeout per feed
             max_concurrent: Max parallel feed fetches
             user_agent: HTTP User-Agent header
+            scrape_full_articles: Whether to scrape full article content
         """
         if not feeds:
             raise ValueError("RSS feeds configuration is required")
         
         self.timeout = aiohttp.ClientTimeout(total=timeout_seconds)
         self.semaphore = asyncio.Semaphore(max_concurrent)
+        self.scrape_full_articles = scrape_full_articles
+        
+        if scrape_full_articles and not BS4_AVAILABLE:
+            logger.warning("beautifulsoup4 not installed - article scraping disabled")
+            self.scrape_full_articles = False
         
         # Use a realistic browser User-Agent to avoid 403 blocks
         self.user_agent = user_agent or (
@@ -183,7 +196,7 @@ class RSSFetcher:
                         return []
                     
                     content = await response.text()
-                    items = self._parse_feed(content, feed_name)
+                    items = await self._parse_feed(content, feed_name, session)
                     
                     logger.debug(f"Parsed {len(items)} items from {feed_name}")
                     return items
@@ -198,13 +211,76 @@ class RSSFetcher:
                 logger.error(f"Error fetching {feed_name}: {e}")
                 raise
     
-    def _parse_feed(self, content: str, feed_name: str) -> List[NewsItem]:
+    async def _scrape_article_content(self, url: str, session: aiohttp.ClientSession) -> Optional[str]:
         """
-        Parse RSS feed content into NewsItem objects.
+        Scrape full article content from URL.
+        
+        Args:
+            url: Article URL
+            session: aiohttp session
+            
+        Returns:
+            Article text or None if scraping fails
+        """
+        if not BS4_AVAILABLE:
+            return None
+            
+        try:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                if response.status != 200:
+                    return None
+                
+                html = await response.text()
+                soup = BeautifulSoup(html, 'html.parser')
+                
+                # Remove unwanted elements
+                for element in soup.find_all(['script', 'style', 'nav', 'header', 'footer', 'aside']):
+                    element.decompose()
+                
+                # Try common article content containers
+                article_content = None
+                for selector in ['article', '.article-content', '.story-content', '.post-content', 'main']:
+                    if selector.startswith('.'):
+                        content = soup.find(class_=selector[1:])
+                    else:
+                        content = soup.find(selector)
+                    if content:
+                        article_content = content.get_text(separator='\n', strip=True)
+                        break
+                
+                # Fallback to body if no article container found
+                if not article_content and soup.body:
+                    article_content = soup.body.get_text(separator='\n', strip=True)
+                
+                # Limit content size (max 5000 chars for API efficiency)
+                if article_content and len(article_content) > 5000:
+                    article_content = article_content[:5000] + "... (truncated)"
+                
+                return article_content
+                
+        except Exception as e:
+            logger.debug(f"Failed to scrape article {url}: {e}")
+            return None
+    
+    async def scrape_article(self, news_item: NewsItem) -> Optional[str]:
+        """Scrape full article content for a NewsItem (public method)."""
+        if not self.scrape_full_articles or not news_item.link:
+            return None
+        
+        if news_item.raw_content:  # Already has content
+            return news_item.raw_content
+        
+        async with aiohttp.ClientSession(headers={'User-Agent': self.user_agent}) as session:
+            return await self._scrape_article_content(news_item.link, session)
+    
+    async def _parse_feed(self, content: str, feed_name: str, session: aiohttp.ClientSession) -> List[NewsItem]:
+        """
+        Parse RSS feed content into NewsItem objects and optionally scrape full articles.
         
         Args:
             content: Raw RSS XML content
             feed_name: Source feed name
+            session: aiohttp session for article scraping
             
         Returns:
             List of NewsItem objects
@@ -237,10 +313,13 @@ class RSSFetcher:
                     # Clean HTML tags from description
                     description = self._clean_html(description)
                     
-                    # Get raw content if available
+                    # Get raw content if available from RSS feed
                     raw_content = None
                     if entry.get('content'):
                         raw_content = entry['content'][0].get('value', '')
+                    
+                    # Note: Article scraping moved to after deduplication for efficiency
+                    # Will only scrape articles that are actually new
                     
                     item = NewsItem(
                         news_id=news_id,

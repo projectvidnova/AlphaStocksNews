@@ -186,17 +186,21 @@ class LlamaAnalyzer:
                  timeout_seconds: int = 60,
                  max_concurrent: int = 3,
                  temperature: float = 0.3,
-                 api_type: str = "ollama"):
+                 api_type: str = "ollama",
+                 api_key: Optional[str] = None,
+                 rate_limit_delay: float = 0.0):
         """
         Initialize Llama analyzer.
         
         Args:
-            base_url: Ollama/llama.cpp server URL
-            model_name: Model to use (e.g., "llama3.2:latest", "mistral")
+            base_url: Ollama/llama.cpp server URL or Azure AI Foundry endpoint
+            model_name: Model to use (e.g., "llama3.2:latest", "mistral", "DeepSeek-V3.2")
             timeout_seconds: Request timeout
             max_concurrent: Max parallel analysis requests
             temperature: LLM temperature (lower = more consistent)
             api_type: API type - "ollama", "openai", or "llamacpp"
+            api_key: API key for authentication (required for Azure/OpenAI)
+            rate_limit_delay: Delay in seconds between API calls (for rate limiting)
         """
         self.base_url = base_url.rstrip('/')
         self.model_name = model_name
@@ -204,6 +208,9 @@ class LlamaAnalyzer:
         self.semaphore = asyncio.Semaphore(max_concurrent)
         self.temperature = temperature
         self.api_type = api_type
+        self.api_key = api_key
+        self.rate_limit_delay = rate_limit_delay
+        self.last_request_time = 0.0
         
         # Atomic statistics (lock-free)
         self.stats = Counter({
@@ -297,12 +304,24 @@ class LlamaAnalyzer:
     def _build_analysis_prompt(self, news_item: NewsItem) -> str:
         """Build the analysis prompt for Llama."""
         
+        # Build article content section
+        content_section = f"NEWS DESCRIPTION: {news_item.description}"
+        
+        if news_item.raw_content:
+            # Truncate if too long
+            content = news_item.raw_content[:3000] if len(news_item.raw_content) > 3000 else news_item.raw_content
+            content_section = f"""NEWS DESCRIPTION: {news_item.description}
+
+FULL ARTICLE CONTENT:
+{content}"""
+            logger.debug(f"Using full article content ({len(content)} chars) for analysis")
+        
         prompt = f"""You are a financial analyst specializing in Indian stock markets (NSE/BSE).
 Analyze the following news article and provide a structured assessment of its market impact.
 
 NEWS TITLE: {news_item.title}
 
-NEWS DESCRIPTION: {news_item.description}
+{content_section}
 
 SOURCE: {news_item.source_feed}
 PUBLISHED: {news_item.published_date.strftime('%Y-%m-%d %H:%M IST')}
@@ -351,6 +370,17 @@ OTHER GUIDELINES:
         Returns:
             Model response text
         """
+        # Rate limiting: wait if needed
+        if self.rate_limit_delay > 0:
+            import time
+            current_time = time.time()
+            time_since_last = current_time - self.last_request_time
+            if time_since_last < self.rate_limit_delay:
+                wait_time = self.rate_limit_delay - time_since_last
+                logger.debug(f"Rate limiting: waiting {wait_time:.2f}s")
+                await asyncio.sleep(wait_time)
+            self.last_request_time = time.time()
+        
         async with aiohttp.ClientSession(timeout=self.timeout) as session:
             if self.api_type == "ollama":
                 return await self._call_ollama(session, prompt)
@@ -384,7 +414,7 @@ OTHER GUIDELINES:
             return result.get("response", "")
     
     async def _call_openai_compatible(self, session: aiohttp.ClientSession, prompt: str) -> str:
-        """Call OpenAI-compatible API (e.g., vLLM, text-generation-inference)."""
+        """Call OpenAI-compatible API (e.g., vLLM, Azure AI Foundry, text-generation-inference)."""
         payload = {
             "model": self.model_name,
             "messages": [
@@ -395,12 +425,34 @@ OTHER GUIDELINES:
             "response_format": {"type": "json_object"}
         }
         
+        # Prepare headers with API key if provided
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            # Azure uses 'api-key' header, OpenAI uses 'Authorization: Bearer'
+            if "azure.com" in self.base_url:
+                headers["api-key"] = self.api_key
+            else:
+                headers["Authorization"] = f"Bearer {self.api_key}"
+        
+        # Determine endpoint URL
+        # Azure AI Foundry uses /openai/v1/chat/completions (OpenAI-compatible)
+        if "azure.com" in self.base_url:
+            endpoint = f"{self.base_url}/openai/v1/chat/completions"
+        else:
+            endpoint = f"{self.base_url}/v1/chat/completions"
+        
+        # Debug logging
+        logger.debug(f"Calling API endpoint: {endpoint}")
+        logger.debug(f"Headers: {', '.join(headers.keys())}")
+        
         async with session.post(
-            f"{self.base_url}/v1/chat/completions",
-            json=payload
+            endpoint,
+            json=payload,
+            headers=headers
         ) as response:
             if response.status != 200:
                 error_text = await response.text()
+                logger.error(f"API request failed - Status: {response.status}, Endpoint: {endpoint}, Error: {error_text}")
                 raise Exception(f"OpenAI API error {response.status}: {error_text}")
             
             result = await response.json()
