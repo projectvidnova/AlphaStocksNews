@@ -115,8 +115,8 @@ class NewsAgent:
             feeds=rss_feeds,
             timeout_seconds=rss_config.get("timeout_seconds", 30),
             max_concurrent=rss_config.get("max_concurrent_feeds", 5),
-            user_agent=rss_config.get("user_agent"),
-            scrape_full_articles=self.config.get("scrape_full_articles", False)
+            user_agent=rss_config.get("user_agent")
+            # Note: scrape_full_articles is handled in _analyze_and_alert() after filtering
         )
         
         # Get Llama config
