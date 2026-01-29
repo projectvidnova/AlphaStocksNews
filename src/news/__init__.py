@@ -1,6 +1,6 @@
 """
 News Analysis Agent Module
-Fetches news from RSS feeds, analyzes with Llama, and validates price impact.
+Fetches news from RSS feeds, analyzes with LLM, and validates price impact.
 """
 
 from .models import (
@@ -13,7 +13,7 @@ from .models import (
     PriceAdjustmentStatus,
 )
 from .rss_fetcher import RSSFetcher
-from .llama_analyzer import LlamaAnalyzer
+from .news_analyzer import NewsAnalyzer, LlamaAnalyzer  # LlamaAnalyzer is alias for backward compatibility
 from .price_validator import PriceValidator
 from .telegram_notifier import TelegramNotifier
 from .news_agent import NewsAgent
@@ -28,7 +28,8 @@ __all__ = [
     "NewsSentiment",
     "PriceAdjustmentStatus",
     "RSSFetcher",
-    "LlamaAnalyzer",
+    "NewsAnalyzer",
+    "LlamaAnalyzer",  # Backward compatibility
     "PriceValidator",
     "TelegramNotifier",
     "NewsAgent",

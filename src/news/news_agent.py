@@ -20,7 +20,7 @@ from uuid import uuid4
 from ..utils.logger_setup import setup_logger
 from ..utils.timezone_utils import get_current_time, to_ist, is_market_hours
 from .rss_fetcher import RSSFetcher
-from .llama_analyzer import LlamaAnalyzer
+from .news_analyzer import NewsAnalyzer
 from .price_validator import PriceValidator
 from .telegram_notifier import TelegramNotifier
 from .news_data_helper import NewsDataHelper
@@ -78,7 +78,7 @@ class NewsAgent:
                  kite_client=None,
                  config: Optional[Dict] = None,
                  rss_fetcher: Optional[RSSFetcher] = None,
-                 llama_analyzer: Optional[LlamaAnalyzer] = None,
+                 llama_analyzer: Optional[NewsAnalyzer] = None,
                  price_validator: Optional[PriceValidator] = None,
                  telegram_notifier: Optional[TelegramNotifier] = None):
         """
@@ -90,7 +90,7 @@ class NewsAgent:
             kite_client: Zerodha Kite client (optional)
             config: Configuration dictionary (optional)
             rss_fetcher: Custom RSS fetcher (for testing)
-            llama_analyzer: Custom Llama analyzer (for testing)
+            llama_analyzer: Custom news analyzer (for testing)
             price_validator: Custom price validator (for testing)
             telegram_notifier: Custom Telegram notifier (for testing)
         """
@@ -121,7 +121,7 @@ class NewsAgent:
         
         # Get Llama config
         llama_config = self.config.get("llama", {})
-        self.llama_analyzer = llama_analyzer or LlamaAnalyzer(
+        self.llama_analyzer = llama_analyzer or NewsAnalyzer(
             base_url=llama_config.get("base_url", "http://localhost:11434"),
             model_name=llama_config.get("model_name", "llama3.2:latest"),
             timeout_seconds=llama_config.get("timeout_seconds", 60),
@@ -306,17 +306,6 @@ class NewsAgent:
             if not new_items:
                 return cycle_results
             
-            # Step 2.5: Scrape full articles for NEW news only (if enabled)
-            if self.config.get("scrape_full_articles", False):
-                logger.info(f"Scraping {len(new_items)} new articles...")
-                scrape_tasks = []
-                for item in new_items:
-                    if not item.raw_content:  # Only scrape if no content yet
-                        scrape_tasks.append(self._scrape_and_update(item))
-                
-                if scrape_tasks:
-                    await asyncio.gather(*scrape_tasks, return_exceptions=True)
-            
             # Step 3: Filter by age
             max_age_hours = self.config.get("max_news_age_hours", 24)
             cutoff_time = get_current_time() - timedelta(hours=max_age_hours)
@@ -410,6 +399,10 @@ class NewsAgent:
             cycle_results: Shared results dict for tracking
         """
         try:
+            # Step 0: Scrape full article if enabled and not already scraped
+            if self.config.get("scrape_full_articles", False) and not news_item.raw_content:
+                news_item = await self._scrape_and_update(news_item)
+            
             # Step 1: Analyze with Llama
             analysis = await self.llama_analyzer.analyze_news(news_item)
             
@@ -423,8 +416,8 @@ class NewsAgent:
             # Step 2: Store analysis in database
             await self.news_data_helper.store_news_analysis(analysis.to_dict())
             
-            # Step 3: Check if high-impact
-            if analysis.impact_level not in impact_levels or not analysis.affected_stocks:
+            # Step 3: Check if high-impact (removed affected_stocks requirement)
+            if analysis.impact_level not in impact_levels:
                 return
             
             cycle_results["high_impact"] += 1
@@ -435,8 +428,9 @@ class NewsAgent:
                 f"(impact={analysis.impact_level.value}, stocks={len(analysis.affected_stocks)})"
             )
             
-            # Step 4: Validate prices and generate alerts (if enabled)
-            if self.config.get("validate_price_impact", True):
+            # Step 4: Generate alerts based on whether stocks are identified
+            if analysis.affected_stocks and self.config.get("validate_price_impact", True):
+                # Has stocks -> validate prices and generate alerts for opportunities
                 if self.price_validator:
                     validations = await self.price_validator.validate_impact(
                         analysis=analysis,
@@ -455,7 +449,8 @@ class NewsAgent:
                             if alert:
                                 cycle_results["alerts"] += 1
             else:
-                # Generate alert directly without price validation
+                # No stocks OR validation disabled -> generate alert directly
+                logger.info(f"Generating alert without validation for: {news_item.title[:40]}...")
                 alert = await self._generate_alert_without_validation(
                     news_item, analysis
                 )
@@ -600,11 +595,16 @@ class NewsAgent:
     async def _generate_alert_without_validation(self,
                                                   news_item: NewsItem,
                                                   analysis: NewsAnalysis) -> Optional[NewsAlert]:
-        """Generate alert without price validation (for news-only mode)."""
+        """Generate alert without price validation (for news-only mode or when no stocks identified)."""
         
         try:
-            # Use first affected stock for alert
+            # Use first affected stock for alert, or MARKET if no stocks identified
             symbol = analysis.affected_stocks[0] if analysis.affected_stocks else "MARKET"
+            
+            logger.info(
+                f"Generating alert for {symbol}: {news_item.title[:40]}... "
+                f"(impact={analysis.impact_level.value}, stocks={len(analysis.affected_stocks)})"
+            )
             
             alert = NewsAlert(
                 alert_id=str(uuid4())[:16],

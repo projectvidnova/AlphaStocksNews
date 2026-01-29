@@ -270,8 +270,14 @@ class RSSFetcher:
         if news_item.raw_content:  # Already has content
             return news_item.raw_content
         
+        logger.info(f"🔍 Scraping: {news_item.title[:50]}...")
         async with aiohttp.ClientSession(headers={'User-Agent': self.user_agent}) as session:
-            return await self._scrape_article_content(news_item.link, session)
+            content = await self._scrape_article_content(news_item.link, session)
+            if content:
+                logger.info(f"✅ Scraped: {len(content)} chars from {news_item.title[:40]}...")
+            else:
+                logger.info(f"⚠️ Scraping failed for: {news_item.title[:40]}...")
+            return content
     
     async def _parse_feed(self, content: str, feed_name: str, session: aiohttp.ClientSession) -> List[NewsItem]:
         """
@@ -297,6 +303,7 @@ class RSSFetcher:
                 try:
                     # Generate unique ID from title + published date
                     title = entry.get('title', '').strip()
+                    logger.info(f"📄 Read: [{feed_name}] {title[:60]}...")
                     published_str = entry.get('published', '')
                     
                     if not title:
