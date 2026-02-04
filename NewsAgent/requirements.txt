@@ -1,0 +1,24 @@
+# Core Dependencies
+python-dotenv==1.0.0
+aiohttp==3.9.1
+asyncio==3.4.3
+
+# RSS and News Parsing
+feedparser==6.0.10
+beautifulsoup4==4.12.2
+lxml==5.1.0
+newspaper3k==0.2.8
+
+# Telegram Notifications
+python-telegram-bot==20.7
+
+# AI/LLM (Optional - for AI-powered analysis)
+openai==1.12.0
+anthropic==0.18.1
+
+# Utilities
+pytz==2024.1
+python-dateutil==2.8.2
+
+# Logging
+colorlog==6.8.0
